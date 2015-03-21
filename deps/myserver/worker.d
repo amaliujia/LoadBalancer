@@ -105,11 +105,12 @@ objs/myserver/worker.o deps/myserver/worker.d : src/myserver/worker.cpp /usr/inc
  /afs/cs/academic/class/15418-s13/public/include/glog/vlog_is_on.h \
  /usr/lib/gcc/x86_64-redhat-linux/4.4.7/../../../../include/c++/4.4.7/iostream \
  /usr/include/semaphore.h /usr/include/bits/semaphore.h \
- /afs/andrew.cmu.edu/usr12/ruiw1/Public/asst4/src/asst4include/server/messages.h \
+ /home/ruiw1/LoadBalancer/src/asst4include/server/messages.h \
  /usr/lib/gcc/x86_64-redhat-linux/4.4.7/../../../../include/c++/4.4.7/map \
  /usr/lib/gcc/x86_64-redhat-linux/4.4.7/../../../../include/c++/4.4.7/bits/stl_tree.h \
  /usr/lib/gcc/x86_64-redhat-linux/4.4.7/../../../../include/c++/4.4.7/bits/stl_map.h \
  /usr/lib/gcc/x86_64-redhat-linux/4.4.7/../../../../include/c++/4.4.7/bits/stl_multimap.h \
- /afs/andrew.cmu.edu/usr12/ruiw1/Public/asst4/src/asst4include/server/worker.h \
- /afs/andrew.cmu.edu/usr12/ruiw1/Public/asst4/src/asst4include/tools/cycle_timer.h \
- /usr/include/sys/time.h
+ /home/ruiw1/LoadBalancer/src/asst4include/server/worker.h \
+ /home/ruiw1/LoadBalancer/src/asst4include/tools/cycle_timer.h \
+ /usr/include/sys/time.h \
+ /home/ruiw1/LoadBalancer/src/asst4include/tools/work_queue.h
