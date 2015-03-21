@@ -113,5 +113,5 @@ objs/myserver/master.o deps/myserver/master.d : src/myserver/master.cpp \
  /usr/lib/gcc/x86_64-redhat-linux/4.4.7/../../../../include/c++/4.4.7/bits/stl_tree.h \
  /usr/lib/gcc/x86_64-redhat-linux/4.4.7/../../../../include/c++/4.4.7/bits/stl_map.h \
  /usr/lib/gcc/x86_64-redhat-linux/4.4.7/../../../../include/c++/4.4.7/bits/stl_multimap.h \
- /home/ruiw1/asst4/src/asst4include/server/messages.h \
- /home/ruiw1/asst4/src/asst4include/server/master.h
+ /home/ruiw1/LoadBalancer/src/asst4include/server/messages.h \
+ /home/ruiw1/LoadBalancer/src/asst4include/server/master.h

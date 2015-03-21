@@ -10,11 +10,14 @@
 #include "server/messages.h"
 #include "server/worker.h"
 #include "tools/cycle_timer.h"
+#include "tools/work_queue.h"
 
 static std::vector<bool> status;
 static const int max_threads = 24;
 static int threads_num = 0;
 
+WorkQueue<Request_msg> workQueue;
+pthread_t threads_id[max_threads];
 sem_t mtx;
 
 void Sem_init(sem_t *mutex, int i, int j){
@@ -82,26 +85,32 @@ static void execute_compareprimes(const Request_msg& req, Response_msg& resp) {
 }
 
 void *thread_main(void *argv){
-  pthread_detach(pthread_self());
+  /*pthread_detach(pthread_self());
   thread_arg *arg = (thread_arg *)argv;
   Request_msg req = *arg->req;
+	
+  Response_msg resp(req.get_tag());*/
+	while(true){
+		const Request_msg req = workQueue.get_work();
+		Response_msg resp(req.get_tag());
+  
+		DLOG(INFO) << "Worker got request: [" << req.get_tag() << ":" << req.get_request_string() << "]\n";
 
-  Response_msg resp(req.get_tag());
+  	double startTime = CycleTimer::currentSeconds();
 
-  DLOG(INFO) << "Worker got request: [" << req.get_tag() << ":" << req.get_request_string() << "]\n";
+  	if (req.get_arg("cmd").compare("compareprimes") == 0) {
+   	 execute_compareprimes(req, resp);
+  	}else{
+   	 execute_work(req, resp);
+  	}
 
-  double startTime = CycleTimer::currentSeconds();
-
-  if (req.get_arg("cmd").compare("compareprimes") == 0) {
-    execute_compareprimes(req, resp);
-  }else{
-    execute_work(req, resp);
-  }
-
-  double dt = CycleTimer::currentSeconds() - startTime;
-  DLOG(INFO) << "Worker completed work in " << (1000.f * dt) << " ms (" << req.get_tag()  << ")\n";
-
-  Sem_wait(&mtx);
+  	double dt = CycleTimer::currentSeconds() - startTime;
+  	DLOG(INFO) << "Worker completed work in " << (1000.f * dt) << " ms (" << req.get_tag()  << ")\n";
+	
+		worker_send_response(resp);
+	}
+  
+	/*Sem_wait(&mtx);
   threads_num--;
   Sem_post(&mtx);
   status[arg->num] = true;
@@ -109,22 +118,20 @@ void *thread_main(void *argv){
   delete arg->req;
   free(arg);
 
-  worker_send_response(resp);
-  return NULL;
+  worker_send_response(resp);*/
+  return NULL; 
 }
 
 void worker_node_init(const Request_msg& params) {
   DLOG(INFO) << "**** Initializing worker: " << params.get_arg("name") << " ****\n";
 
-  for(int i = 0; i < max_threads; i++){
-      status.push_back(true);
-      threads_num++;
+  for(int i = 0; i < max_threads; i++){		
+		create_pthread(&threads_id[i], NULL, thread_main, NULL);
   }
-  Sem_init(&mtx, 0, 1);
 }
 
 void worker_handle_request(const Request_msg& req) {
-  Request_msg *re = new Request_msg(req.get_tag(), req.get_request_string());
+  /*Request_msg *re = new Request_msg(req.get_tag(), req.get_request_string());
   thread_arg *arg = (thread_arg *)malloc(sizeof(thread_arg));
   arg->req = re;
   int i;
@@ -136,5 +143,6 @@ void worker_handle_request(const Request_msg& req) {
       create_pthread(&j, NULL, thread_main, arg);
       break;
     }
-  }
+  }*/
+	workQueue.put_work(req);
 }

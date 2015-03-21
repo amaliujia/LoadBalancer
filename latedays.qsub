@@ -23,7 +23,7 @@
 # number of nodes that you need.
 #
 
-#PBS -l nodes=2:ppn=24
+#PBS -l nodes=5:ppn=24
 
 
 #

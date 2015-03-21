@@ -57,14 +57,14 @@ void master_node_init(int max_workers, int& tick_period) {
   DLOG(INFO) << "max worker  " << max_workers << std::endl;
 
   int tag = random();
-  //for(int i = 0; i < 1; i++){
+  for(int i = 0; i < max_workers; i++){
     Request_msg req(tag++);
 		int id = 0;
 		std::stringstream convert;
 		convert << id;		
     req.set_arg("name", convert.str());
     request_new_worker_node(req);
-  //}
+  }
 }
 
 void create_queue_request(Request &request, const Request_msg &msg,
