@@ -12,37 +12,10 @@
 #include "tools/cycle_timer.h"
 #include "tools/work_queue.h"
 
-static std::vector<bool> status;
 static const int max_threads = 24;
-static int threads_num = 0;
 
 WorkQueue<Request_msg> workQueue;
 pthread_t threads_id[max_threads];
-sem_t mtx;
-
-void Sem_init(sem_t *mutex, int i, int j){
-  if(sem_init(mutex, i, j) < 0){
-    printf("no mutext\n");
-  }
-}
-
-void Sem_wait(sem_t *mutex){
-  if(sem_wait(mutex) < 0){
-    printf("mutex wait fail\n");
-  }
-}
-
-void Sem_post(sem_t *mutex){
-  if(sem_post(mutex) < 0){
-    printf("mutex post fail\n");
-  }
-}
-
-struct thread_arg{
-  Request_msg *req;
-  int num;
-};
-typedef struct thread_arg thread_arg;
 
 void create_pthread(pthread_t *tid, pthread_attr_t *attr,
                     void *(* routine)(void *), void *arg)
@@ -85,11 +58,6 @@ static void execute_compareprimes(const Request_msg& req, Response_msg& resp) {
 }
 
 void *thread_main(void *argv){
-  /*pthread_detach(pthread_self());
-  thread_arg *arg = (thread_arg *)argv;
-  Request_msg req = *arg->req;
-	
-  Response_msg resp(req.get_tag());*/
 	while(true){
 		const Request_msg req = workQueue.get_work();
 		Response_msg resp(req.get_tag());
@@ -109,16 +77,6 @@ void *thread_main(void *argv){
 	
 		worker_send_response(resp);
 	}
-  
-	/*Sem_wait(&mtx);
-  threads_num--;
-  Sem_post(&mtx);
-  status[arg->num] = true;
-
-  delete arg->req;
-  free(arg);
-
-  worker_send_response(resp);*/
   return NULL; 
 }
 
@@ -131,18 +89,5 @@ void worker_node_init(const Request_msg& params) {
 }
 
 void worker_handle_request(const Request_msg& req) {
-  /*Request_msg *re = new Request_msg(req.get_tag(), req.get_request_string());
-  thread_arg *arg = (thread_arg *)malloc(sizeof(thread_arg));
-  arg->req = re;
-  int i;
-  for(i = 0; i < max_threads; i++){
-    if(status[i] == true){
-      status[i] = false;
-      arg->num = i;
-      pthread_t j;
-      create_pthread(&j, NULL, thread_main, arg);
-      break;
-    }
-  }*/
 	workQueue.put_work(req);
 }

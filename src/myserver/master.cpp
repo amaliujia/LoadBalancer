@@ -9,20 +9,13 @@
 #include "server/messages.h"
 #include "server/master.h"
 
-#define DEBUG  
-
 static int thread_num = 24;
-
+static int factor = 1.5;
 struct Request{
   Request_msg *msg;
   Client_handle client_handle;
 };
 typedef struct Request Request;
-
-struct Job{
-  Client_handle client_handle;
-};
-typedef struct Job Job;
 
 struct Worker{
   Worker_handle worker_handle;
@@ -33,40 +26,58 @@ typedef struct Worker worker;
 
 static struct Request_Queue{
   int next_tag;
-  int max_worker_num;
+  int next_worker_tag;
 	int worker_num;
   int cur_worker_num;
-	int start_assign;
-  Worker workers[32];
+  Worker workers[4];
   std::map<Worker_handle, int> workerMap;
   std::queue<Request> request_que;
   bool server_ready;
+	
 }que;
+
+void start_node(){
+	if(que.cur_worker_num < que.worker_num){
+  	Request_msg req(que.next_worker_tag);
+		std::stringstream convert;
+		convert << que.next_worker_tag;		
+  	req.set_arg("name", convert.str());
+  	request_new_worker_node(req);
+		que.next_worker_tag++;
+	}
+}
+
+void destroy_node(int i){
+	Worker_handle worker_handle = que.workers[i].worker_handle;
+	que.workers[i].jobs = -1;
+	que.workers[i].pending_job.clear();
+	std::map<Worker_handle, int>::iterator iter;
+	iter = que.workerMap.find(worker_handle);
+	if(iter != que.workerMap.end()){
+		que.workerMap.erase(iter);
+	}
+	kill_worker_node(worker_handle); 
+  que.workers[i].worker_handle = 0;
+	que.cur_worker_num--;
+}
 
 void master_node_init(int max_workers, int& tick_period) {
   std::cout << "Master init" << std::endl;
 
-  tick_period = 0.5;
+  tick_period = 5;
 
+	// initialization
   que.next_tag = 0;
-  que.max_worker_num = max_workers;
-
   que.cur_worker_num = 0;
-	que.worker_num = 0;
+	que.worker_num = max_workers;
   que.server_ready = false;
-	que.start_assign = 0;
-	que.max_worker_num = max_workers;
-  DLOG(INFO) << "max worker  " << max_workers << std::endl;
+  que.next_worker_tag = random();
 
-  int tag = random();
-  for(int i = 0; i < max_workers; i++){
-    Request_msg req(tag);
-		int id = 0;
-		std::stringstream convert;
-		convert << id;		
-    req.set_arg("name", convert.str());
-    request_new_worker_node(req);
-  }
+	for(int i = 0; i < que.worker_num; i++){
+		que.workers[i].jobs = -1;
+	}
+
+	start_node();
 }
 
 void create_queue_request(Request &request, const Request_msg &msg,
@@ -76,7 +87,7 @@ void create_queue_request(Request &request, const Request_msg &msg,
 }
 
 void assign_job(int worker, Client_handle client_handle, int tag){
-  //que.workers[worker].jobs++;
+  que.workers[worker].jobs++;
   que.workers[worker].pending_job[tag] = client_handle;
 }
 
@@ -86,17 +97,21 @@ void handle_new_worker_online(Worker_handle worker_handle, int tag) {
     que.server_ready = true;
   }
 
-  //#ifdef DEBUG
+  #ifdef DEBUG
   DLOG(INFO) << que.cur_worker_num  << " worker  " << worker_handle  << std::endl;
-  //#endif
-  que.workers[que.cur_worker_num].worker_handle = worker_handle;
-  //que.workers[que.cur_worker_num].jobs = 0;
-  que.workerMap[worker_handle] = que.cur_worker_num;
-  //#ifdef DEBUG 
+  #endif
+	for(int i = 0; i < que.worker_num; i++){
+  	if(que.workers[i].jobs == -1){
+				que.workers[i].worker_handle = worker_handle;
+  			que.workers[i].jobs = 0;
+  			que.workerMap[worker_handle] = i;
+				break;
+		}
+	}
+  #ifdef DEBUG 
   DLOG(INFO) << que.cur_worker_num  << "  " << worker_handle  << std::endl;
-  //#endif
+  #endif
   que.cur_worker_num += 1;
-	que.worker_num += 1;
 }
 
 
@@ -104,11 +119,11 @@ void handle_worker_response(Worker_handle worker_handle, const Response_msg& res
   DLOG(INFO) << "Master received a response from a worker: [" << resp.get_tag() << ":" << resp.get_response() << "]" << std::endl;
   int tag = resp.get_tag();
   int id = que.workerMap[worker_handle];
-  //#ifdef DEBUG
+  #ifdef DEBUG
     if(id >= que.worker_num){
       DLOG(INFO) << "wrong worker id " << id << std::endl;
     }
-  //#endif
+  #endif
   Client_handle waiting_client = que.workers[id].pending_job[tag];
   send_client_response(waiting_client, resp);
   std::map<int, Client_handle>::iterator iter;
@@ -117,7 +132,33 @@ void handle_worker_response(Worker_handle worker_handle, const Response_msg& res
     return;
   }
   que.workers[id].pending_job.erase(iter);
-  //que.workers[id].jobs--;
+  que.workers[id].jobs--;
+}
+
+bool check_workload(){
+	for(int i = 0; i < que.worker_num; i++){
+			if(que.workers[i].jobs != -1 && que.workers[i].jobs <= thread_num * factor){
+					return true;
+			} 
+	}
+	return false;
+}
+
+void send_request(const Request_msg &req, int tag, Client_handle child_handle){
+  for(int i = 0; i < que.worker_num; i++){
+      if(que.workers[i].jobs != -1 && que.workers[i].jobs <= thread_num * factor){
+	       assign_job(i, child_handle, tag);
+ 		  	 Worker_handle worker = que.workers[i].worker_handle;
+			   send_request_to_worker(worker, req);
+				 break;
+			}
+  }
+}
+
+void cache_request(const Request_msg &req, Client_handle client_handle){
+  Request cacheRe;
+  create_queue_request(cacheRe, req, client_handle);
+  que.request_que.push(cacheRe);
 }
 
 void handle_client_request(Client_handle client_handle, const Request_msg& client_req) {
@@ -129,55 +170,50 @@ void handle_client_request(Client_handle client_handle, const Request_msg& clien
     return;
   }
 
-	int i = que.start_assign;
   int tag = que.next_tag++;
   Request_msg worker_req(tag, client_req);
-  assign_job(i, client_handle, tag);
-	Worker_handle worker = que.workers[i].worker_handle;
-	send_request_to_worker(worker, worker_req);
-	que.start_assign = (que.start_assign + 1) % que.worker_num;	
-  /*for(int i = 0; i < que.worker_num; i++){
-    if(que.workers[i].jobs < thread_num){
-        int tag = que.next_tag++;
-        Request_msg worker_req(tag, client_req);
-        assign_job(i, client_handle, tag);
-        Worker_handle worker = que.workers[i].worker_handle;
-        //#ifdef DEBUG
-        DLOG(INFO) << "send to this worker:  " << worker << std::endl;
-        //#endif
-        send_request_to_worker(worker, worker_req);
-        return;
-    }
-  }
-  Request cacheRe;
-  int tag = que.next_tag++;
-  Request_msg worker_req(tag, client_req);
-  create_queue_request(cacheRe, worker_req, client_handle);
-  que.request_que.push(cacheRe);
-  return;*/
+  if(check_workload()){
+			send_request(worker_req, tag, client_handle);	
+	}else{
+			cache_request(worker_req, client_handle);
+			start_node();
+	}
+  return;
 }
 
-void lanuchJob(){
-  for(int i = 0; i < que.worker_num; i++){
-    while(que.workers[i].jobs < thread_num && que.request_que.size() > 0){
-      Request r = que.request_que.front();
-      que.request_que.pop();
-      assign_job(i, r.client_handle, r.msg->get_tag());
-      Worker_handle worker = que.workers[i].worker_handle;
-      //#ifdef DEBUG
-      DLOG(INFO) <<  "launch worker in click: "<< worker  << std::endl;
-      //#endif
-      send_request_to_worker(worker, *r.msg);
-      delete r.msg;
-    }
-    if(que.request_que.size() == 0){
-      break;
-    }
-  }
+void lanch_queued_job(){
+	Request r = que.request_que.front();
+  que.request_que.pop();
+  Request_msg req = Request_msg(*r.msg);	
+  DLOG(INFO) << "Lauch request from queue" << req.get_request_string() << std::endl;
+	send_request(req, req.get_tag(), r.client_handle);	
+  delete r.msg;
+}
+
+void clean(){
+	if(que.cur_worker_num <= 1){
+		return;
+	}
+
+	for(int i = 0; i < que.worker_num; i++){
+		if(que.workers[i].jobs == 0){
+			destroy_node(i);	
+		}
+  	if(que.cur_worker_num <= 1){
+   		 return;
+  	}
+	}  
 }
 
 void handle_tick() {
-  if(que.request_que.size() != 0){
-      //lanuchJob();
-  }
+	//case 1: queued request and enough ability
+	while(que.request_que.size() > 0 && check_workload()){
+		lanch_queued_job();	
+	}
+	
+//	if(que.request_que.size() > 0 && !check_workload()){
+//		start_node();
+//	}
+	
+	clean();	
 }
