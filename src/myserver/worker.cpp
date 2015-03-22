@@ -10,7 +10,7 @@
 #include "server/messages.h"
 #include "server/worker.h"
 #include "tools/cycle_timer.h"
-#include "tools/work_queue.h"
+#include "my_worker_queue.h"
 
 static const int max_threads = 24;
 
@@ -76,7 +76,6 @@ void *thread_main(void *arg){
   	DLOG(INFO) << "Worker completed work in " << (1000.f * dt) << " ms (" << req.get_tag()  << ")\n";
 	
 		worker_send_response(resp);
-		//DLOG(INFO) << "Still remain" << ":" << workQueue.get_size() << "]\n";
 	}
   return NULL; 
 }
@@ -91,5 +90,9 @@ void worker_node_init(const Request_msg& params) {
 
 void worker_handle_request(const Request_msg& req) {
 	Request_msg r(req);
-	workQueue.put_work(r);
+	if(req.get_arg("cmd").compare("tellmenow") == 0){
+		workQueue.put_work_front(r);
+	}else{
+		workQueue.put_work(r);
+	}
 }

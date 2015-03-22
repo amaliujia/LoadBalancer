@@ -170,10 +170,20 @@ void send_request(const Request_msg &req, int tag, Client_handle child_handle){
   }
 }
 
-void schedule(){
+void send_priority_request(const Request_msg &req, int tag, Client_handle child_handle){
+	assign_job(0, child_handle, tag);
+  Worker_handle worker = que.workers[0].worker_handle;
+  send_request_to_worker(worker, req);	
+}
+
+void schedule_worker(){
 		if(que.request_que.size() >= thread_num){
 			start_node();
 		}	
+}
+
+void schedule_request(const Request_msg &req, int tag, Client_handle client_handle){
+	send_request(req, tag, client_handle); 
 }
 
 void cache_request(const Request_msg &req, Client_handle client_handle){
@@ -191,14 +201,21 @@ void handle_client_request(Client_handle client_handle, const Request_msg& clien
     send_client_response(client_handle, resp);
     return;
   }
-
+	
   int tag = que.next_tag++;
   Request_msg worker_req(tag, client_req);
-  if(check_workload()){
-			send_request(worker_req, tag, client_handle);	
+	
+	if(client_req.get_arg("cmd") == "tellmenow"){
+		send_priority_request(worker_req, tag, client_handle);
+		return;	
+	}
+	
+	 if(check_workload()){
+		schedule_request(worker_req, tag, client_handle); 	
+		//send_request(worker_req, tag, client_handle);	
 	}else{
 			cache_request(worker_req, client_handle);
-			schedule();
+			schedule_worker();
 	}
   return;
 }
@@ -217,7 +234,7 @@ void clean(){
 		return;
 	}
 
-	for(int i = 0; i < que.worker_num; i++){
+	for(int i = 1; i < que.worker_num; i++){
 		if(que.workers[i].jobs == 0){
 			destroy_node(i);	
 		}
@@ -234,7 +251,7 @@ void handle_tick() {
 			  while(que.request_que.size() > 0 && check_workload()){
   			  lanch_queued_job();
   			}
-				schedule();		
+				schedule_worker();		
 				DLOG(INFO) << "Tick: req queue size:" << que.request_que.size() << std::endl;		
 	}else{//case 2: clean unused worker.
 		clean();
