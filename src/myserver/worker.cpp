@@ -57,7 +57,7 @@ static void execute_compareprimes(const Request_msg& req, Response_msg& resp) {
       resp.set_response("There are more primes in second range.");
 }
 
-void *thread_main(void *argv){
+void *thread_main(void *arg){
 	while(true){
 		const Request_msg req = workQueue.get_work();
 		Response_msg resp(req.get_tag());
@@ -76,6 +76,7 @@ void *thread_main(void *argv){
   	DLOG(INFO) << "Worker completed work in " << (1000.f * dt) << " ms (" << req.get_tag()  << ")\n";
 	
 		worker_send_response(resp);
+		//DLOG(INFO) << "Still remain" << ":" << workQueue.get_size() << "]\n";
 	}
   return NULL; 
 }
@@ -89,5 +90,6 @@ void worker_node_init(const Request_msg& params) {
 }
 
 void worker_handle_request(const Request_msg& req) {
-	workQueue.put_work(req);
+	Request_msg r(req);
+	workQueue.put_work(r);
 }

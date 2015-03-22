@@ -9,8 +9,12 @@
 #include "server/messages.h"
 #include "server/master.h"
 
+#define DEBUG
+
+// constants
 static int thread_num = 24;
 static int factor = 1.5;
+
 struct Request{
   Request_msg *msg;
   Client_handle client_handle;
@@ -33,23 +37,28 @@ static struct Request_Queue{
   std::map<Worker_handle, int> workerMap;
   std::queue<Request> request_que;
   bool server_ready;
-	
+	bool ifBooting;	
 }que;
 
 void start_node(){
-	if(que.cur_worker_num < que.worker_num){
+	if(que.cur_worker_num < que.worker_num && !que.ifBooting){
   	Request_msg req(que.next_worker_tag);
 		std::stringstream convert;
 		convert << que.next_worker_tag;		
   	req.set_arg("name", convert.str());
   	request_new_worker_node(req);
 		que.next_worker_tag++;
+  	DLOG(INFO) << "start  worker:  " << que.next_worker_tag - 1  << std::endl;
+		que.ifBooting = true;
 	}
 }
 
 void destroy_node(int i){
 	Worker_handle worker_handle = que.workers[i].worker_handle;
 	que.workers[i].jobs = -1;
+	if(que.workers[i].pending_job.size() > 0){
+		DLOG(INFO) << "Kill a worker with non-zero job" << std::endl;
+	}
 	que.workers[i].pending_job.clear();
 	std::map<Worker_handle, int>::iterator iter;
 	iter = que.workerMap.find(worker_handle);
@@ -59,12 +68,13 @@ void destroy_node(int i){
 	kill_worker_node(worker_handle); 
   que.workers[i].worker_handle = 0;
 	que.cur_worker_num--;
+  DLOG(INFO) << "Kill  worker  " << worker_handle  << std::endl;
 }
 
 void master_node_init(int max_workers, int& tick_period) {
   std::cout << "Master init" << std::endl;
 
-  tick_period = 5;
+  tick_period = 1;
 
 	// initialization
   que.next_tag = 0;
@@ -72,11 +82,11 @@ void master_node_init(int max_workers, int& tick_period) {
 	que.worker_num = max_workers;
   que.server_ready = false;
   que.next_worker_tag = random();
+	que.ifBooting = false;
 
 	for(int i = 0; i < que.worker_num; i++){
 		que.workers[i].jobs = -1;
 	}
-
 	start_node();
 }
 
@@ -97,10 +107,11 @@ void handle_new_worker_online(Worker_handle worker_handle, int tag) {
     que.server_ready = true;
   }
 
-  #ifdef DEBUG
+ // #ifdef DEBUG
   DLOG(INFO) << que.cur_worker_num  << " worker  " << worker_handle  << std::endl;
-  #endif
-	for(int i = 0; i < que.worker_num; i++){
+  //#endif
+	int i;
+	for(i = 0; i < que.worker_num; i++){
   	if(que.workers[i].jobs == -1){
 				que.workers[i].worker_handle = worker_handle;
   			que.workers[i].jobs = 0;
@@ -108,12 +119,15 @@ void handle_new_worker_online(Worker_handle worker_handle, int tag) {
 				break;
 		}
 	}
+	if(i == que.worker_num){
+		DLOG(INFO) << "------------------horrible  worker ------------ " << std::endl;	
+	}
   #ifdef DEBUG 
   DLOG(INFO) << que.cur_worker_num  << "  " << worker_handle  << std::endl;
   #endif
   que.cur_worker_num += 1;
-}
-
+	que.ifBooting = false; 
+} 
 
 void handle_worker_response(Worker_handle worker_handle, const Response_msg& resp) {
   DLOG(INFO) << "Master received a response from a worker: [" << resp.get_tag() << ":" << resp.get_response() << "]" << std::endl;
@@ -137,7 +151,8 @@ void handle_worker_response(Worker_handle worker_handle, const Response_msg& res
 
 bool check_workload(){
 	for(int i = 0; i < que.worker_num; i++){
-			if(que.workers[i].jobs != -1 && que.workers[i].jobs <= thread_num * factor){
+			if(que.workers[i].jobs != -1 && que.workers[i].jobs < thread_num * factor)
+			{
 					return true;
 			} 
 	}
@@ -146,7 +161,7 @@ bool check_workload(){
 
 void send_request(const Request_msg &req, int tag, Client_handle child_handle){
   for(int i = 0; i < que.worker_num; i++){
-      if(que.workers[i].jobs != -1 && que.workers[i].jobs <= thread_num * factor){
+      if(que.workers[i].jobs != -1 && que.workers[i].jobs < thread_num * factor){
 	       assign_job(i, child_handle, tag);
  		  	 Worker_handle worker = que.workers[i].worker_handle;
 			   send_request_to_worker(worker, req);
@@ -155,10 +170,17 @@ void send_request(const Request_msg &req, int tag, Client_handle child_handle){
   }
 }
 
+void schedule(){
+		if(que.request_que.size() >= thread_num){
+			start_node();
+		}	
+}
+
 void cache_request(const Request_msg &req, Client_handle client_handle){
   Request cacheRe;
   create_queue_request(cacheRe, req, client_handle);
   que.request_que.push(cacheRe);
+  DLOG(INFO) << "Cache req " << req.get_tag() << "  " << req.get_request_string()<< std::endl;
 }
 
 void handle_client_request(Client_handle client_handle, const Request_msg& client_req) {
@@ -176,7 +198,7 @@ void handle_client_request(Client_handle client_handle, const Request_msg& clien
 			send_request(worker_req, tag, client_handle);	
 	}else{
 			cache_request(worker_req, client_handle);
-			start_node();
+			schedule();
 	}
   return;
 }
@@ -206,14 +228,16 @@ void clean(){
 }
 
 void handle_tick() {
+	DLOG(INFO) << "Tick: come in" << que.request_que.size() << std::endl;
 	//case 1: queued request and enough ability
-	while(que.request_que.size() > 0 && check_workload()){
-		lanch_queued_job();	
+	if(que.request_que.size() > 0){
+			  while(que.request_que.size() > 0 && check_workload()){
+  			  lanch_queued_job();
+  			}
+				schedule();		
+				DLOG(INFO) << "Tick: req queue size:" << que.request_que.size() << std::endl;		
+	}else{//case 2: clean unused worker.
+		clean();
 	}
-	
-//	if(que.request_que.size() > 0 && !check_workload()){
-//		start_node();
-//	}
-	
-	clean();	
+	DLOG(INFO) << "Tick: finish" << que.request_que.size() << std::endl;	
 }
