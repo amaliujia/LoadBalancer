@@ -13,7 +13,8 @@
 
 // constants
 static int thread_num = 24;
-static int factor = 1.5;
+static int thread_num_one = 23;
+static int factor = 1;
 
 struct Request{
   Request_msg *msg;
@@ -36,6 +37,8 @@ static struct Request_Queue{
   Worker workers[4];
   std::map<Worker_handle, int> workerMap;
   std::queue<Request> request_que;
+	std::map<std::string, Response_msg> prime_cache;
+	std::map<int, std::string> prime_cache_req; 
   bool server_ready;
 	bool ifBooting;	
 }que;
@@ -138,10 +141,18 @@ void handle_worker_response(Worker_handle worker_handle, const Response_msg& res
       DLOG(INFO) << "wrong worker id " << id << std::endl;
     }
   #endif
-  Client_handle waiting_client = que.workers[id].pending_job[tag];
+	std::map<int, std::string>::iterator it;
+	it = que.prime_cache_req.find(tag);
+	if(it != que.prime_cache_req.end()){
+		que.prime_cache[que.prime_cache_req[tag]] = resp; 
+	}
+  
+
+	Client_handle waiting_client = que.workers[id].pending_job[tag];
   send_client_response(waiting_client, resp);
-  std::map<int, Client_handle>::iterator iter;
-  iter = que.workers[id].pending_job.find(tag);
+ 
+	std::map<int, Client_handle>::iterator iter;
+	iter = que.workers[id].pending_job.find(tag);
   if(iter == que.workers[id].pending_job.end()){
     return;
   }
@@ -150,7 +161,10 @@ void handle_worker_response(Worker_handle worker_handle, const Response_msg& res
 }
 
 bool check_workload(){
-	for(int i = 0; i < que.worker_num; i++){
+	if(que.workers[0].jobs < thread_num_one){
+		return true;
+	}
+	for(int i = 1; i < que.worker_num; i++){
 			if(que.workers[i].jobs != -1 && que.workers[i].jobs < thread_num * factor)
 			{
 					return true;
@@ -160,7 +174,13 @@ bool check_workload(){
 }
 
 void send_request(const Request_msg &req, int tag, Client_handle child_handle){
-  for(int i = 0; i < que.worker_num; i++){
+	if(que.workers[0].jobs < thread_num_one){
+         assign_job(0, child_handle, tag);
+         Worker_handle worker = que.workers[0].worker_handle;
+         send_request_to_worker(worker, req);
+				 return;
+	}
+  for(int i = 1; i < que.worker_num; i++){
       if(que.workers[i].jobs != -1 && que.workers[i].jobs < thread_num * factor){
 	       assign_job(i, child_handle, tag);
  		  	 Worker_handle worker = que.workers[i].worker_handle;
@@ -177,7 +197,7 @@ void send_priority_request(const Request_msg &req, int tag, Client_handle child_
 }
 
 void schedule_worker(){
-		if(que.request_que.size() >= thread_num){
+		if(que.request_que.size() >= thread_num * 0.25){
 			start_node();
 		}	
 }
@@ -193,6 +213,20 @@ void cache_request(const Request_msg &req, Client_handle client_handle){
   DLOG(INFO) << "Cache req " << req.get_tag() << "  " << req.get_request_string()<< std::endl;
 }
 
+void prime_cache_set(const Response_msg& resp){
+	std::string arg = que.prime_cache_req[resp.get_tag()];
+	que.prime_cache[arg] = resp;
+}
+
+bool prime_cache_find(const Request_msg& client_req){
+	std::map<std::string, Response_msg>::iterator it;
+	it = que.prime_cache.find(client_req.get_arg("n"));
+	if(it != que.prime_cache.end()){
+			return true; 
+	}
+	return false; 
+}
+
 void handle_client_request(Client_handle client_handle, const Request_msg& client_req) {
   DLOG(INFO) << "Received request: " << client_req.get_request_string() << std::endl;
   if (client_req.get_arg("cmd") == "lastrequest") {
@@ -200,6 +234,14 @@ void handle_client_request(Client_handle client_handle, const Request_msg& clien
     resp.set_response("ack");
     send_client_response(client_handle, resp);
     return;
+  }
+
+  if(client_req.get_arg("cmd") == "countprimes"){
+    if(prime_cache_find(client_req)){
+      Response_msg resp(que.prime_cache[client_req.get_arg("n")]);
+      send_client_response(client_handle, resp);
+      return;
+    }
   }
 	
   int tag = que.next_tag++;
@@ -209,13 +251,18 @@ void handle_client_request(Client_handle client_handle, const Request_msg& clien
 		send_priority_request(worker_req, tag, client_handle);
 		return;	
 	}
+
+	if(client_req.get_arg("cmd") == "countprimes"){
+		std::string arg = client_req.get_arg("n");
+		que.prime_cache_req[tag] = arg;	 
+	}
 	
 	 if(check_workload()){
 		schedule_request(worker_req, tag, client_handle); 	
 		//send_request(worker_req, tag, client_handle);	
 	}else{
-			cache_request(worker_req, client_handle);
-			schedule_worker();
+		cache_request(worker_req, client_handle);
+		schedule_worker();
 	}
   return;
 }
