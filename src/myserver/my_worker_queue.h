@@ -2,6 +2,7 @@
 #define _MY_WORKER_QUEUE_H
 
 #include <vector>
+#include <glog/logging.h>
 
 template <class T>
 class WorkQueue {
@@ -35,11 +36,31 @@ public:
     pthread_mutex_unlock(&queue_lock);
     pthread_cond_signal(&queue_cond);
   }
+
+	void put_work_project(const T& item){
+    pthread_mutex_lock(&queue_lock);
+   	typename std::vector<T>::iterator iter;
+		bool ifFind = false;
+		for(iter = storage.begin(); iter != storage.end(); iter++){
+			if(iter->get_arg("cmd").compare("projectidea") == 0){
+					ifFind = true;
+			}else if(iter->get_arg("cmd").compare("projectidea") != 0 && ifFind){
+				storage.insert(iter, item);
+				DLOG(INFO) << "**** Insert project !! "  << " ****\n";
+				break;	
+			}	
+		}
+		
+		if(!ifFind){
+			storage.push_back(item);
+			DLOG(INFO) << "**** Append project !! "  << " ****\n";	
+		}	 
+    pthread_mutex_unlock(&queue_lock);
+    pthread_cond_signal(&queue_cond);
+	}
 	
 	void put_work_front(const T& item){
     pthread_mutex_lock(&queue_lock);
-    //std::vector<T>::iterator iter;
-		//iter = storage.begin();
 		storage.insert(storage.begin(), item);
     pthread_mutex_unlock(&queue_lock);
     pthread_cond_signal(&queue_cond);

@@ -22,6 +22,8 @@ static int thread_num_one = 23;
 static int factor = 1;
 static float threshold = 0.5;
 
+static bool bp = false;
+
 struct Request{
   Request_msg *msg;
   Client_handle client_handle;
@@ -32,6 +34,8 @@ struct Worker{
   Worker_handle worker_handle;
   std::map<int, Client_handle> pending_job;
   int jobs;
+	int ptag[2];
+	int hasProject;
 };
 typedef struct Worker worker;
 
@@ -45,7 +49,7 @@ static struct Request_Queue{
 	std::map<std::string, Response_msg> prime_cache;
 	std::map<int, std::string> prime_cache_req; 
   std::queue<Request> request_que;
-	std::queue<Request> project_que;	
+	std::queue<Request> project_que;
   bool server_ready;
 	bool ifBooting;
 	bool ifProjectWorker;	
@@ -55,6 +59,8 @@ void init_worker_node(int i, Worker_handle worker_handle){
   que.workers[i].worker_handle = worker_handle;
   que.workers[i].jobs = 0;
   que.workerMap[worker_handle] = i;
+	que.workers[i].hasProject = false;
+	que.workers[i].ptag = -1;	
 }
 
 void start_node(){
@@ -86,6 +92,8 @@ void start_project_node(){
 void destroy_node(int i){
 	Worker_handle worker_handle = que.workers[i].worker_handle;
 	que.workers[i].jobs = -1;
+	que.workers[i].ptag = -1;
+	que.workers[i].hasProject = false;
 	if(que.workers[i].pending_job.size() > 0){
 		DLOG(INFO) << "Kill a worker with non-zero job" << std::endl;
 	}
@@ -117,6 +125,7 @@ void master_node_init(int max_workers, int& tick_period) {
 
 	for(int i = 0; i < que.worker_num; i++){
 		que.workers[i].jobs = -1;
+		que.workers[i].hasProject = false;
 	}
 	start_node();
 }
@@ -151,7 +160,7 @@ void handle_project_worker_online(Worker_handle worker_handle){
   que.ifProjectWorker = false;
 
   init_worker_node(WORKER_PROJECT, worker_handle);
-
+	DLOG(INFO) << "Project worker online" << std::endl;
   while(que.project_que.size() > 0){
     lanch_queued_project_job();
   }
@@ -163,16 +172,16 @@ void handle_new_worker_online(Worker_handle worker_handle, int tag) {
     que.server_ready = true;
   }
 
-	if(que.ifProjectWorker == true){
-		handle_project_worker_online(worker_handle);
-	}else{
+//	if(que.ifProjectWorker){
+//		handle_project_worker_online(worker_handle);
+//	}else{//bug here?
   		int i;
   		for(i = 0; i < que.worker_num; i++){
-    	if(que.workers[i].jobs == -1){
-        init_worker_node(i, worker_handle);
-				break;
+    		if(que.workers[i].jobs == -1){
+       	  init_worker_node(i, worker_handle);
+					break;
     	}
-  	}
+  	//}
   	if(i == que.worker_num){
    		 DLOG(INFO) << "------------------horrible  worker ------------ " << std::endl;
   	}
@@ -194,13 +203,14 @@ void handle_worker_response(Worker_handle worker_handle, const Response_msg& res
       DLOG(INFO) << "wrong worker id " << id << std::endl;
     }
   #endif
+	//if this is prime, cache result
 	std::map<int, std::string>::iterator it;
 	it = que.prime_cache_req.find(tag);
 	if(it != que.prime_cache_req.end()){
 		que.prime_cache[que.prime_cache_req[tag]] = resp; 
 	}
   
-
+	//send resp back
 	Client_handle waiting_client = que.workers[id].pending_job[tag];
   send_client_response(waiting_client, resp);
  
@@ -211,6 +221,12 @@ void handle_worker_response(Worker_handle worker_handle, const Response_msg& res
   }
   que.workers[id].pending_job.erase(iter);
   que.workers[id].jobs--;
+
+	//if this is a projectidea
+	if(que.workers[id].ptag == resp.get_tag()){
+		que.workers[id].ptag = -1;
+		que.workers[id].hasProject = false;	
+  }
 }
 
 bool check_workload(){
@@ -233,7 +249,7 @@ void send_request(const Request_msg &req, int tag, Client_handle child_handle){
          send_request_to_worker(worker, req);
 				 return;
 	}
-  for(int i = 1; i < que.worker_num - 1; i++){
+  for(int i = 1; i < que.worker_num ; i++){
       if(que.workers[i].jobs != -1 && que.workers[i].jobs < thread_num * factor){
 	       assign_job(i, child_handle, tag);
  		  	 Worker_handle worker = que.workers[i].worker_handle;
@@ -289,6 +305,50 @@ bool prime_cache_find(const Request_msg& client_req){
 	return false; 
 }
 
+bool check_and_set_project(Client_handle client_handle, const Request_msg& req, int tag){
+  for(int i = 0; i < que.worker_num; i++){
+    if(que.workers[i].jobs != -1 && !que.workers[i].hasProject){
+      send_priority_request(req, tag, client_handle, i);
+      que.workers[i].hasProject = true;
+      que.workers[i].ptag = tag;
+      return true;
+    }
+  }
+	return false;	
+}
+
+bool check_project_workload(){
+  for(int i = 0; i < que.worker_num; i++){
+    if(que.workers[i].jobs != -1 && !que.workers[i].hasProject){
+      return true;
+    }
+  }
+  return false;	
+}
+
+void schedule_project(Client_handle client_handle, const Request_msg& req, int tag){
+	while(que.project_que.size() > 0){
+		if(!check_project_workload()){
+			break;	
+		}
+		const Request r = que.project_que.front();
+		que.project_que.pop();
+	
+		check_and_set_project(r.client_handle, *r.msg , r.msg->get_tag());
+			
+		// delete
+		delete r.msg;	
+	} 
+
+	if(check_and_set_project(client_handle, req, tag)){
+		return;
+	}
+
+	//no available project worker
+	start_node();
+	cache_project_request(req, client_handle);
+}
+
 void handle_client_request(Client_handle client_handle, const Request_msg& client_req) {
   DLOG(INFO) << "Received request: " << client_req.get_request_string() << std::endl;
   if (client_req.get_arg("cmd") == "lastrequest") {
@@ -320,15 +380,17 @@ void handle_client_request(Client_handle client_handle, const Request_msg& clien
 	}
 
 	if(client_req.get_arg("cmd") == "projectidea"){
-		if(que.workers[WORKER_PROJECT].jobs != -1){
-			send_priority_request(worker_req, tag, client_handle, WORKER_PROJECT);
-		
-		}else{
+		bp = true;
+		//if(que.workers[WORKER_PROJECT].jobs != -1){
+		//send_priority_request(worker_req, tag, client_handle, WORKER_MAIN);
+				
+		//}else{
 		//start project worker
-		start_project_node();
+		//start_project_node();
 		//queue prjectidea req
-		cache_project_request(worker_req, client_handle);			
-		}	
+		//cache_project_request(worker_req, client_handle);			
+		//}
+		schedule_project(client_handle, worker_req, tag);		
 		goto done;
 	}
 	
@@ -375,18 +437,23 @@ void handle_tick() {
 			  while(que.request_que.size() > 0 && check_workload()){
   			  lanch_queued_job();
   			}
-				schedule_worker();		
+				//schedule_worker();		
 				DLOG(INFO) << "Tick: req queue size:" << que.request_que.size() << std::endl;		
-	}else if(que.project_que.size() > 0){ //case 2: queued project req
-    if(que.workers[WORKER_PROJECT].jobs != -1){
-      while(que.project_que.size() > 0){
-				lanch_queued_project_job();
-			}
-		}else{
-			start_project_node();
-		}	
 	}
 	
+	if(que.project_que.size() > 0){ //case 2: queued project req
+	  while(que.project_que.size() > 0){
+ 	  	 if(!check_project_workload()){
+     			 break;
+    	 }
+    	 const Request r = que.project_que.front();
+    	 que.project_que.pop();
+
+    	 check_and_set_project(r.client_handle, *r.msg , r.msg->get_tag());	
+	     
+			 delete r.msg;	
+		}
+	}	
 	clean();
 	DLOG(INFO) << "Tick: finish" << que.request_que.size() << std::endl;	
 }

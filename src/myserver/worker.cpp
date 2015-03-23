@@ -76,6 +76,7 @@ void *thread_main(void *arg){
   	DLOG(INFO) << "Worker completed work in " << (1000.f * dt) << " ms (" << req.get_tag()  << ")\n";
 	
 		worker_send_response(resp);
+		DLOG(INFO) << "**** Project finish " << resp.get_tag() << " ****\n";
 	}
   return NULL; 
 }
@@ -92,6 +93,10 @@ void worker_handle_request(const Request_msg& req) {
 	Request_msg r(req);
 	if(req.get_arg("cmd").compare("tellmenow") == 0){
 		workQueue.put_work_front(r);
+	}else if(req.get_arg("cmd").compare("projectidea") == 0){
+		workQueue.put_work_project(r);	
+ 	DLOG(INFO) << "**** Project in queue " << r.get_tag() << " ****\n";
+
 	}else{
 		workQueue.put_work(r);
 	}
