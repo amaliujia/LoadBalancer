@@ -1,4 +1,4 @@
-	#include <glog/logging.h>
+#include <glog/logging.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <iostream>
@@ -23,6 +23,7 @@ static int factor = 1.5;
 static float threshold = 0.5;
 
 static bool bp = false;
+static int cpc = 0;
 
 struct Request{
   Request_msg *msg;
@@ -49,7 +50,12 @@ public:
 	
 public:
 	comPrime(){
-
+		count = 0;
+		for(int i = 0; i < 4; i++){
+				res[i] = 0;
+				n[i] = 0;
+				tag[i] = -1;
+		}
 	}
 };
 
@@ -225,7 +231,6 @@ void handle_worker_response(Worker_handle worker_handle, const Response_msg& res
 		que.prime_cache[que.prime_cache_req[tag]] = resp; 
 	}
  
-
 	//if this is a compare primes, handle it
 	if(que.comPrimes.find(tag) != que.comPrimes.end()){
 			comPrime *cp = que.comPrimes[tag];
@@ -242,9 +247,9 @@ void handle_worker_response(Worker_handle worker_handle, const Response_msg& res
       		dummy_resp.set_response("There are more primes in first range.");
     		else
       		dummy_resp.set_response("There are more primes in second range.");
+				
 				send_client_response(cp->client_handle, dummy_resp);
-			
-				// TODO:dealloc
+		  	DLOG(INFO) << "Response  " << ++cpc  << " -----------" << std::endl;	
 			}	
 	}else{ 
 	//send resp back
@@ -395,7 +400,7 @@ void create_computerprime_req(Request_msg& req, int n) {
 
 void handle_client_request(Client_handle client_handle, const Request_msg& client_req) {
   DLOG(INFO) << "Received request: " << client_req.get_request_string() << std::endl;
-  if (client_req.get_arg("cmd") == "lastrequest") {
+  if(client_req.get_arg("cmd") == "lastrequest") {
     Response_msg resp(0);
     resp.set_response("ack");
     send_client_response(client_handle, resp);
@@ -437,7 +442,13 @@ void handle_client_request(Client_handle client_handle, const Request_msg& clien
 			cp->client_handle = client_handle;	
   		
 			for(int i = 0; i < 4; i++){
-				send_request(dummy_req[i], cp->tag[i], client_handle);
+				//send_request(dummy_req[i], cp->tag[i], client_handle);
+				   if(check_workload()){
+   						 schedule_request(dummy_req[i], cp->tag[i], client_handle);
+   				}else{
+    					cache_request(dummy_req[i], client_handle);
+    					schedule_worker();
+   }
 			}
 			//goto done;
 			return;
@@ -473,7 +484,6 @@ void handle_client_request(Client_handle client_handle, const Request_msg& clien
 
 	 if(check_workload()){
 		schedule_request(worker_req, tag, client_handle); 	
-		//send_request(worker_req, tag, client_handle);	
 	 }else{
 		cache_request(worker_req, client_handle);
 		schedule_worker();
