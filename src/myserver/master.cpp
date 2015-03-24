@@ -1,4 +1,4 @@
-#include <glog/logging.h>
+	#include <glog/logging.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <iostream>
@@ -19,7 +19,7 @@
 // constants
 static int thread_num = 24;
 static int thread_num_one = 23;
-static int factor = 1;
+static int factor = 1.5;
 static float threshold = 0.5;
 
 static bool bp = false;
@@ -34,10 +34,24 @@ struct Worker{
   Worker_handle worker_handle;
   std::map<int, Client_handle> pending_job;
   int jobs;
-	int ptag[2];
-	int hasProject;
+	int ptag;
+	bool hasProject;
 };
 typedef struct Worker worker;
+
+class comPrime{
+public:
+  int n[4];
+  int tag[4];
+ 	int res[4];
+	int count;		
+	Client_handle client_handle;
+	
+public:
+	comPrime(){
+
+	}
+};
 
 static struct Request_Queue{
   int next_tag;
@@ -47,7 +61,8 @@ static struct Request_Queue{
   Worker workers[4];
   std::map<Worker_handle, int> workerMap;
 	std::map<std::string, Response_msg> prime_cache;
-	std::map<int, std::string> prime_cache_req; 
+	std::map<int, std::string> prime_cache_req;
+	std::map<int, comPrime *> comPrimes; 
   std::queue<Request> request_que;
 	std::queue<Request> project_que;
   bool server_ready;
@@ -209,15 +224,37 @@ void handle_worker_response(Worker_handle worker_handle, const Response_msg& res
 	if(it != que.prime_cache_req.end()){
 		que.prime_cache[que.prime_cache_req[tag]] = resp; 
 	}
-  
-	//send resp back
-	Client_handle waiting_client = que.workers[id].pending_job[tag];
-  send_client_response(waiting_client, resp);
  
+
+	//if this is a compare primes, handle it
+	if(que.comPrimes.find(tag) != que.comPrimes.end()){
+			comPrime *cp = que.comPrimes[tag];
+			for(int i = 0; i < 4; i++){
+				if(cp->tag[i] == tag){
+					cp->res[i] = atoi(resp.get_response().c_str());
+					cp->count++;
+					break;	
+				}	
+			}
+			if(cp->count == 4){//finish, merge and return
+				Response_msg dummy_resp(0);
+	    	if (cp->res[1] - cp->res[0] > cp->res[3] - cp->res[2])
+      		dummy_resp.set_response("There are more primes in first range.");
+    		else
+      		dummy_resp.set_response("There are more primes in second range.");
+				send_client_response(cp->client_handle, dummy_resp);
+			
+				// TODO:dealloc
+			}	
+	}else{ 
+	//send resp back
+			Client_handle waiting_client = que.workers[id].pending_job[tag];
+  		send_client_response(waiting_client, resp);
+	} 
 	std::map<int, Client_handle>::iterator iter;
 	iter = que.workers[id].pending_job.find(tag);
-  if(iter == que.workers[id].pending_job.end()){
-    return;
+ 	if(iter == que.workers[id].pending_job.end()){
+    		return;
   }
   que.workers[id].pending_job.erase(iter);
   que.workers[id].jobs--;
@@ -349,6 +386,13 @@ void schedule_project(Client_handle client_handle, const Request_msg& req, int t
 	cache_project_request(req, client_handle);
 }
 
+void create_computerprime_req(Request_msg& req, int n) {
+  std::ostringstream oss;
+  oss << n;
+  req.set_arg("cmd", "countprimes");
+  req.set_arg("n", oss.str());
+}
+
 void handle_client_request(Client_handle client_handle, const Request_msg& client_req) {
   DLOG(INFO) << "Received request: " << client_req.get_request_string() << std::endl;
   if (client_req.get_arg("cmd") == "lastrequest") {
@@ -365,6 +409,39 @@ void handle_client_request(Client_handle client_handle, const Request_msg& clien
     	return;
 		}
   }
+
+  if(client_req.get_arg("cmd") == "compareprimes"){
+      comPrime *cp = new comPrime();
+			Request_msg dummy_req[4];
+			for(int i = 0; i < 4; i++){
+   			int tag = que.next_tag++;
+				int n = 0;
+				if(i == 0)
+					 n = atoi(client_req.get_arg("n1").c_str());		 
+     		else if(i == 1)
+					 n = atoi(client_req.get_arg("n2").c_str()); 
+				else if(i == 2)
+					n = atoi(client_req.get_arg("n3").c_str()); 
+				else
+					n = atoi(client_req.get_arg("n4").c_str()); 
+				
+				cp->n[i] = n;
+				cp->tag[i] = tag;
+				dummy_req[i].set_tag(tag);
+				create_computerprime_req(dummy_req[i], n);
+			}
+
+			for(int i = 0; i < 4; i++){
+				que.comPrimes[cp->tag[i]] = cp;	
+			}
+			cp->client_handle = client_handle;	
+  		
+			for(int i = 0; i < 4; i++){
+				send_request(dummy_req[i], cp->tag[i], client_handle);
+			}
+			//goto done;
+			return;
+	}
 	
   int tag = que.next_tag++;
   Request_msg worker_req(tag, client_req);
@@ -380,7 +457,7 @@ void handle_client_request(Client_handle client_handle, const Request_msg& clien
 	}
 
 	if(client_req.get_arg("cmd") == "projectidea"){
-		bp = true;
+		//bp = true;
 		//if(que.workers[WORKER_PROJECT].jobs != -1){
 		//send_priority_request(worker_req, tag, client_handle, WORKER_MAIN);
 				
@@ -393,7 +470,7 @@ void handle_client_request(Client_handle client_handle, const Request_msg& clien
 		schedule_project(client_handle, worker_req, tag);		
 		goto done;
 	}
-	
+
 	 if(check_workload()){
 		schedule_request(worker_req, tag, client_handle); 	
 		//send_request(worker_req, tag, client_handle);	
