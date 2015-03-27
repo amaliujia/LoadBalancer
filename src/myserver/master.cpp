@@ -6,6 +6,7 @@
 #include <queue>
 #include <map>
 
+#include "include.h"
 #include "server/messages.h"
 #include "server/master.h"
 
@@ -269,6 +270,28 @@ void handle_worker_response(Worker_handle worker_handle, const Response_msg& res
 		que.workers[id].ptag = -1;
 		que.workers[id].hasProject = false;	
   }
+
+	//clean my queue
+  if(que.request_que.size() > 0){
+        while(que.request_que.size() > 0 && check_workload()){
+          lanch_queued_job();
+        }
+  }
+
+  if(que.project_que.size() > 0){ 
+    while(que.project_que.size() > 0){
+       if(!check_project_workload()){
+           break;
+       }
+       const Request r = que.project_que.front();
+       que.project_que.pop();
+
+       check_and_set_project(r.client_handle, *r.msg , r.msg->get_tag());
+
+       delete r.msg;
+    }
+  }
+		
 }
 
 bool check_workload(){
@@ -524,11 +547,11 @@ void handle_tick() {
 			  while(que.request_que.size() > 0 && check_workload()){
   			  lanch_queued_job();
   			}
-				//schedule_worker();		
 				DLOG(INFO) << "Tick: req queue size:" << que.request_que.size() << std::endl;		
 	}
-	
-	if(que.project_que.size() > 0){ //case 2: queued project req
+
+	//case 2: queued project req	
+	if(que.project_que.size() > 0){ 
 	  while(que.project_que.size() > 0){
  	  	 if(!check_project_workload()){
      			 break;
